@@ -1,0 +1,4 @@
+opencv-python
+numpy
+mss
+# pip install -r requirements.txt
