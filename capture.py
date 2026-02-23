@@ -16,8 +16,8 @@ class ColorDetector:
         
         # Color Range: Example for "Enemy Purple" (typical in games like Valorant)
         # You'll need to tune these HSV values for your specific game
-        self.lower_color = np.array([140, 110, 150]) 
-        self.upper_color = np.array([160, 255, 255])
+        self.lower_color = np.array([5, 150, 150]) 
+        self.upper_color = np.array([22, 255, 255])
 
     def get_data(self):
         # 1. Capture a specific region around the center
