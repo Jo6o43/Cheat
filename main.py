@@ -3,7 +3,7 @@ import display
 import mouse
 
 def main():
-    brain = capture.Capture()
+    brain = capture.ColorDetector()
     painter = display.Display()
     aimbot = mouse.MouseController()
 
