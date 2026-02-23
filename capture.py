@@ -2,22 +2,29 @@ import cv2
 import numpy as np
 from mss import mss
 
+
 class ColorDetector:
-    def __init__(self):
+    def __init__(self, search_size: int = 400, lower_color: np.ndarray = None, upper_color: np.ndarray = None):
         self.sct = mss()
-        # Define a smaller search area (FOV) for speed
-        # Scanning the whole screen is slow; a 200x200 box is much faster
-        self.search_size = 200 
+        # Field of view size (square region centered on screen)
+        self.search_size = int(search_size)
         self.monitor = self.sct.monitors[1]
-        
+
         # Center coordinates
         self.screen_w = self.monitor['width']
         self.screen_h = self.monitor['height']
-        
-        # Color Range: Example for "Enemy Purple" (typical in games like Valorant)
-        # You'll need to tune these HSV values for your specific game
-        self.lower_color = np.array([5, 150, 150]) 
-        self.upper_color = np.array([22, 255, 255])
+
+        # Default HSV thresholds (tweakable)
+        self.lower_color = np.array([5, 150, 150]) if lower_color is None else np.array(lower_color, dtype=np.int32)
+        self.upper_color = np.array([22, 255, 255]) if upper_color is None else np.array(upper_color, dtype=np.int32)
+
+    def set_thresholds(self, lower, upper):
+        """Set HSV lower/upper thresholds. Accepts sequences or numpy arrays."""
+        self.lower_color = np.array(lower, dtype=np.int32)
+        self.upper_color = np.array(upper, dtype=np.int32)
+
+    def set_search_size(self, size: int):
+        self.search_size = int(size)
 
     def get_data(self):
         # 1. Capture a specific region around the center
@@ -33,7 +40,7 @@ class ColorDetector:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         # 2. Create a mask to find the color
-        mask = cv2.inRange(hsv, self.lower_color, self.upper_color)
+        mask = cv2.inRange(hsv, self.lower_color.astype('uint8'), self.upper_color.astype('uint8'))
         
         # 3. Find the "Center of Mass" of the color pixels
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -65,4 +72,4 @@ class ColorDetector:
                 "head": [abs_x, abs_y]
             })
 
-        return frame, detections
+        return frame, detections, mask
