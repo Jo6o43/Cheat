@@ -49,9 +49,33 @@ def main():
 
         frame, people, mask = brain.get_data()
 
-        if people and people[0]["head"]:
-            hx, hy = people[0]["head"]
-            aimbot.move_to(hx, hy, activation_key="ALT")
+        # If there are detections, pick the one whose head is closest to the
+        # center of the captured frame (i.e., closest to the screen center)
+        if people:
+            center_x = brain.search_size // 2
+            center_y = brain.search_size // 2
+            best = None
+            best_dist = None
+            for p in people:
+                if not p.get("head"):
+                    continue
+                hx_rel, hy_rel = p["head"]
+                dx = hx_rel - center_x
+                dy = hy_rel - center_y
+                dist_sq = dx * dx + dy * dy
+                if best is None or dist_sq < best_dist:
+                    best = (hx_rel, hy_rel)
+                    best_dist = dist_sq
+
+            if best:
+                hx_rel, hy_rel = best
+                # Convert frame-relative coordinates to absolute screen coordinates
+                region_left = int(brain.screen_w // 2 - brain.search_size // 2)
+                region_top = int(brain.screen_h // 2 - brain.search_size // 2)
+                abs_x = int(hx_rel + region_left)
+                abs_y = int(hy_rel + region_top)
+                aimbot.move_to(abs_x, abs_y, activation_key="ALT")
+                print(f"Moved mouse to: ({abs_x}, {abs_y})")
 
         painter.show(frame, people)
 

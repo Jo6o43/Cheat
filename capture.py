@@ -49,27 +49,18 @@ class ColorDetector:
         if contours:
             # 1. Find the biggest blob (the enemy)
             largest = max(contours, key=cv2.contourArea)
-            
-            # 2. Get the Bounding Box
-            # x,y is top-left corner; w,h is width and height
+
+            # 2. Get the Bounding Box (coordinates are relative to the captured frame)
             x, y, w, h = cv2.boundingRect(largest)
-            
-            # 3. Calculate Head Position
-            # Center of the blob horizontally (X)
-            head_x = x + (w // 2)
-            
-            # Vertical Offset (Y): 
-            # In most games, the head is the top ~15% of the body.
-            # We take the very top 'y' and add a tiny bit of height.
-            head_y = y + int(h * 0.15) 
-            
-            # Convert to Absolute Screen Coordinates
-            abs_x = head_x + region["left"]
-            abs_y = head_y + region["top"]
-            
+
+            # 3. Calculate Head Position (relative to the frame)
+            head_x = int(x + (w / 2))
+            head_y = int(y + int(h * 0.15))
+
+            # Use frame-relative coordinates so drawing appears on the captured image
             detections.append({
-                "box": [abs_x - (w//2), abs_y, abs_x + (w//2), abs_y + h],
-                "head": [abs_x, abs_y]
+                "box": [int(x), int(y), int(x + w), int(y + h)],
+                "head": [int(head_x), int(head_y)]
             })
 
         return frame, detections, mask
