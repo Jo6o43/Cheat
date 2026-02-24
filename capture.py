@@ -6,7 +6,7 @@ from mss import mss
 class ColorDetector:
     def __init__(self, search_size: int = 200, lower_color: np.ndarray = None, upper_color: np.ndarray = None, exclude_yellow: bool = True):
         self.sct = mss()
-        self.max_aspect = 2.8  # Default aspect ratio threshold
+        self.max_aspect = 2.5  # Default aspect ratio threshold (HP bars are wider)
         self.search_size = int(search_size)
         self.monitor = self.sct.monitors[1]
 
@@ -89,33 +89,48 @@ class ColorDetector:
             candidates = []
             min_area = 300  # ignore tiny blobs
             v_channel = hsv[:, :, 2]
+
+            def _is_hp_bar(cnt, area, x, y, w, h):
+                """Return True if this contour looks like an HP/status bar."""
+                aspect = w / float(h + 1e-6)
+
+                # 1) Very high aspect ratio -> almost certainly a bar
+                if aspect > self.max_aspect:
+                    return True
+
+                # 2) Absolute height too small to be an enemy body
+                if h < 12:
+                    return True
+
+                # 3) Wide + very short relative to search area -> UI bar
+                if w > int(self.search_size * 0.6) and h < max(6, int(self.search_size * 0.08)):
+                    return True
+
+                # 4) Solidity check: HP bars fill their bounding rect almost
+                #    completely (solidity near 1.0) AND have a high aspect ratio.
+                #    Enemy bodies are less rectangular (lower solidity).
+                bbox_area = float(w * h + 1e-6)
+                solidity = area / bbox_area
+                if solidity > 0.85 and aspect > 2.0:
+                    return True
+
+                # 5) V-channel stddev: bars are uniformly bright (low variance)
+                mask_contour = np.zeros(mask.shape, dtype=np.uint8)
+                cv2.drawContours(mask_contour, [cnt], -1, 255, -1)
+                _, stddev = cv2.meanStdDev(v_channel, mask=mask_contour)
+                std_v = float(stddev[0, 0]) if stddev is not None else 0.0
+                if std_v < 6.0:
+                    return True
+
+                return False
+
             for cnt in contours:
                 area = cv2.contourArea(cnt)
                 if area < min_area:
                     continue
                 x, y, w, h = cv2.boundingRect(cnt)
-                aspect = w / float(h + 1e-6)
-                # Health/HP bars tend to be very wide but short (high aspect).
-                if aspect > self.max_aspect:
-                    continue
-                if h < 12:
-                    # too short to be a character body
-                    continue
 
-                # Additional heuristics to reject flat, rectangular UI bars:
-                # 1) If the contour spans most of the search width but is very
-                #    short in height, it's likely a UI element.
-                if w > int(self.search_size * 0.6) and h < max(6, int(self.search_size * 0.08)):
-                    continue
-
-                # 2) Compute the V-channel standard deviation inside the contour.
-                #    Health bars are usually flat/uniform brightness (low stddev).
-                mask_contour = np.zeros(mask.shape, dtype=np.uint8)
-                cv2.drawContours(mask_contour, [cnt], -1, 255, -1)
-                _, stddev = cv2.meanStdDev(v_channel, mask=mask_contour)
-                std_v = float(stddev[0,0]) if stddev is not None else 0.0
-                if std_v < 6.0:
-                    # low brightness variance -> likely a flat UI bar
+                if _is_hp_bar(cnt, area, x, y, w, h):
                     continue
 
                 candidates.append((area, cnt))
@@ -123,8 +138,16 @@ class ColorDetector:
             if candidates:
                 largest = max(candidates, key=lambda t: t[0])[1]
             else:
-                # fallback to the largest contour if nothing passed filters
-                largest = max(contours, key=cv2.contourArea)
+                # Fallback: pick the largest contour that at least passes the
+                # most basic shape checks (not a paper-thin bar).
+                fallback = [
+                    cnt for cnt in contours
+                    if cv2.contourArea(cnt) >= min_area
+                    and (lambda r: r[3] >= 8 and (r[2] / float(r[3] + 1e-6)) <= self.max_aspect)(
+                        cv2.boundingRect(cnt)
+                    )
+                ]
+                largest = max(fallback, key=cv2.contourArea) if fallback else max(contours, key=cv2.contourArea)
 
             # 2. Get the Bounding Box (coordinates are relative to the captured frame)
             x, y, w, h = cv2.boundingRect(largest)
