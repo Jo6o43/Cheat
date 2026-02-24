@@ -84,11 +84,10 @@ class ColorDetector:
         
         detections = []
         if contours:
-            # Filter out contours that look like UI elements (health bars are
-            # typically wide and very short) or are too small to be an enemy.
             candidates = []
-            min_area = 300  # ignore tiny blobs
+            min_area = 300
             v_channel = hsv[:, :, 2]
+            s_channel = hsv[:, :, 1]
 
             def _is_hp_bar(cnt, area, x, y, w, h):
                 """Return True if this contour looks like an HP/status bar."""
@@ -102,63 +101,99 @@ class ColorDetector:
                 if h < 12:
                     return True
 
-                # 3) Wide + very short relative to search area -> UI bar
+                # 3) Height is unrealistically small compared to width
+                #    (catches bars whose aspect just sneaks under max_aspect)
+                if h < max(8, int(w * 0.25)):
+                    return True
+
+                # 4) Wide + very short relative to search area -> UI bar
                 if w > int(self.search_size * 0.6) and h < max(6, int(self.search_size * 0.08)):
                     return True
 
-                # 4) Solidity check: HP bars fill their bounding rect almost
-                #    completely (solidity near 1.0) AND have a high aspect ratio.
-                #    Enemy bodies are less rectangular (lower solidity).
+                # 5) Solidity: HP bars fill their bounding rect almost completely.
+                #    Enemy bodies (irregular silhouette) have much lower solidity.
                 bbox_area = float(w * h + 1e-6)
-                solidity = area / bbox_area
+                solidity  = area / bbox_area
                 if solidity > 0.85 and aspect > 2.0:
                     return True
 
-                # 5) V-channel stddev: bars are uniformly bright (low variance)
-                mask_contour = np.zeros(mask.shape, dtype=np.uint8)
-                cv2.drawContours(mask_contour, [cnt], -1, 255, -1)
-                _, stddev = cv2.meanStdDev(v_channel, mask=mask_contour)
-                std_v = float(stddev[0, 0]) if stddev is not None else 0.0
-                if std_v < 6.0:
+                # 6) Rectangularity via polygon approximation.
+                #    HP bars approximate to <= 5 vertices; bodies need many more.
+                peri  = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+                if len(approx) <= 5 and aspect > 1.8:
+                    return True
+
+                # 7) Both V-channel AND S-channel variance must be low for a bar.
+                #    Bars are uniformly coloured; enemy textures vary in both.
+                mask_c = np.zeros(mask.shape, dtype=np.uint8)
+                cv2.drawContours(mask_c, [cnt], -1, 255, -1)
+                _, sv = cv2.meanStdDev(v_channel, mask=mask_c)
+                _, ss = cv2.meanStdDev(s_channel, mask=mask_c)
+                std_v = float(sv[0, 0]) if sv is not None else 0.0
+                std_s = float(ss[0, 0]) if ss is not None else 0.0
+                # Low variance in BOTH channels -> flat coloured rectangle (bar)
+                if std_v < 8.0 and std_s < 12.0:
+                    return True
+                # Still reject if brightness alone is very flat
+                if std_v < 5.0:
                     return True
 
                 return False
 
+            # ── Build a rect lookup for every valid contour ─────────────────
+            all_rects = []
             for cnt in contours:
-                area = cv2.contourArea(cnt)
-                if area < min_area:
+                a = cv2.contourArea(cnt)
+                if a < min_area:
                     continue
-                x, y, w, h = cv2.boundingRect(cnt)
+                rx, ry, rw, rh = cv2.boundingRect(cnt)
+                all_rects.append((cnt, a, rx, ry, rw, rh))
 
+            # ── Bar-above-body suppression ───────────────────────────────────
+            # If a wide/short contour's bottom edge sits just above the top of a
+            # taller, narrower contour it is the HP bar floating above the body.
+            def _is_bar_above_body(x, y, w, h):
+                if w < h * 1.5:           # not wide enough to be a bar candidate
+                    return False
+                bar_bottom = y + h
+                bar_mid    = x + w // 2
+                gap_tol    = max(12, int(self.search_size * 0.06))
+                for _, _, bx, by, bw, bh in all_rects:
+                    if bh <= h:            # body must be taller than the bar
+                        continue
+                    if not (bar_bottom <= by <= bar_bottom + gap_tol):
+                        continue
+                    if bx <= bar_mid <= bx + bw:   # horizontally aligned
+                        return True
+                return False
+
+            for cnt, area, x, y, w, h in all_rects:
                 if _is_hp_bar(cnt, area, x, y, w, h):
                     continue
-
+                if _is_bar_above_body(x, y, w, h):
+                    continue
                 candidates.append((area, cnt))
 
             if candidates:
                 largest = max(candidates, key=lambda t: t[0])[1]
             else:
-                # Fallback: pick the largest contour that at least passes the
-                # most basic shape checks (not a paper-thin bar).
+                # Fallback: use largest contour that at least isn't paper-thin
                 fallback = [
-                    cnt for cnt in contours
-                    if cv2.contourArea(cnt) >= min_area
-                    and (lambda r: r[3] >= 8 and (r[2] / float(r[3] + 1e-6)) <= self.max_aspect)(
-                        cv2.boundingRect(cnt)
-                    )
+                    cnt for cnt, a, rx, ry, rw, rh in all_rects
+                    if rh >= 8 and (rw / float(rh + 1e-6)) <= self.max_aspect
                 ]
-                largest = max(fallback, key=cv2.contourArea) if fallback else max(contours, key=cv2.contourArea)
+                largest = (
+                    max(fallback, key=cv2.contourArea) if fallback
+                    else max(contours, key=cv2.contourArea)
+                )
 
-            # 2. Get the Bounding Box (coordinates are relative to the captured frame)
             x, y, w, h = cv2.boundingRect(largest)
+            head_x = int(x + w / 2)
+            head_y = int(y + h * 0.15)
 
-            # 3. Calculate Head Position (relative to the frame)
-            head_x = int(x + (w / 2))
-            head_y = int(y + int(h * 0.15))
-
-            # Use frame-relative coordinates so drawing appears on the captured image
             detections.append({
-                "box": [int(x), int(y), int(x + w), int(y + h)],
+                "box":  [int(x), int(y), int(x + w), int(y + h)],
                 "head": [int(head_x), int(head_y)]
             })
 
