@@ -6,6 +6,7 @@ from mss import mss
 class ColorDetector:
     def __init__(self, search_size: int = 200, lower_color: np.ndarray = None, upper_color: np.ndarray = None, exclude_yellow: bool = True):
         self.sct = mss()
+        self.max_aspect = 2.8  # Default aspect ratio threshold
         self.search_size = int(search_size)
         self.monitor = self.sct.monitors[1]
 
@@ -95,7 +96,7 @@ class ColorDetector:
                 x, y, w, h = cv2.boundingRect(cnt)
                 aspect = w / float(h + 1e-6)
                 # Health/HP bars tend to be very wide but short (high aspect).
-                if aspect > 3.0:
+                if aspect > self.max_aspect:
                     continue
                 if h < 12:
                     # too short to be a character body
@@ -112,7 +113,7 @@ class ColorDetector:
                 mask_contour = np.zeros(mask.shape, dtype=np.uint8)
                 cv2.drawContours(mask_contour, [cnt], -1, 255, -1)
                 _, stddev = cv2.meanStdDev(v_channel, mask=mask_contour)
-                std_v = float(stddev[0]) if stddev is not None else 0.0
+                std_v = float(stddev[0,0]) if stddev is not None else 0.0
                 if std_v < 6.0:
                     # low brightness variance -> likely a flat UI bar
                     continue

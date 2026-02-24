@@ -17,6 +17,8 @@ def create_trackbar_window(name: str, detector: capture.ColorDetector):
     cv2.createTrackbar('S High', name, hs, 255, lambda x: None)
     cv2.createTrackbar('V High', name, hv, 255, lambda x: None)
     cv2.createTrackbar('Search Size', name, detector.search_size, 1000, lambda x: None)
+    # Max aspect ratio (stored as value*10 on trackbar to allow one decimal)
+    cv2.createTrackbar('Max Aspect x10', name, int(detector.max_aspect * 10), 50, lambda x: None)
 
 
 def read_trackbar_values(name: str):
@@ -27,7 +29,9 @@ def read_trackbar_values(name: str):
     hs = cv2.getTrackbarPos('S High', name)
     hv = cv2.getTrackbarPos('V High', name)
     sz = cv2.getTrackbarPos('Search Size', name)
-    return (np.array([lh, ls, lv], dtype=np.int32), np.array([hh, hs, hv], dtype=np.int32), max(20, sz))
+    aspect_x10 = cv2.getTrackbarPos('Max Aspect x10', name)
+    aspect = max(5, aspect_x10) / 10.0
+    return (np.array([lh, ls, lv], dtype=np.int32), np.array([hh, hs, hv], dtype=np.int32), max(20, sz), aspect)
 
 
 def main():
@@ -43,9 +47,10 @@ def main():
 
     while True:
         # Update thresholds from trackbars
-        lower, upper, ssz = read_trackbar_values(tuning_win)
+        lower, upper, ssz, aspect = read_trackbar_values(tuning_win)
         brain.set_thresholds(lower, upper)
         brain.set_search_size(ssz)
+        brain.max_aspect = float(aspect)
 
         frame, people, mask = brain.get_data()
 
