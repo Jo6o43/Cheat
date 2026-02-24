@@ -47,8 +47,29 @@ class ColorDetector:
         
         detections = []
         if contours:
-            # 1. Find the biggest blob (the enemy)
-            largest = max(contours, key=cv2.contourArea)
+            # Filter out contours that look like UI elements (health bars are
+            # typically wide and very short) or are too small to be an enemy.
+            candidates = []
+            min_area = 300  # ignore tiny blobs
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area < min_area:
+                    continue
+                x, y, w, h = cv2.boundingRect(cnt)
+                aspect = w / float(h + 1e-6)
+                # Health/HP bars tend to be very wide but short (high aspect).
+                if aspect > 3.0:
+                    continue
+                if h < 12:
+                    # too short to be a character body
+                    continue
+                candidates.append((area, cnt))
+
+            if candidates:
+                largest = max(candidates, key=lambda t: t[0])[1]
+            else:
+                # fallback to the largest contour if nothing passed filters
+                largest = max(contours, key=cv2.contourArea)
 
             # 2. Get the Bounding Box (coordinates are relative to the captured frame)
             x, y, w, h = cv2.boundingRect(largest)
