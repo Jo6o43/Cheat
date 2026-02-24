@@ -6,15 +6,12 @@ from mss import mss
 class ColorDetector:
     def __init__(self, search_size: int = 400, lower_color: np.ndarray = None, upper_color: np.ndarray = None):
         self.sct = mss()
-        # Field of view size (square region centered on screen)
         self.search_size = int(search_size)
         self.monitor = self.sct.monitors[1]
 
-        # Center coordinates
         self.screen_w = self.monitor['width']
         self.screen_h = self.monitor['height']
 
-        # Default HSV thresholds (tweakable)
         self.lower_color = np.array([5, 150, 150]) if lower_color is None else np.array(lower_color, dtype=np.int32)
         self.upper_color = np.array([22, 255, 255]) if upper_color is None else np.array(upper_color, dtype=np.int32)
 
@@ -38,9 +35,11 @@ class ColorDetector:
         img = np.array(self.sct.grab(region))
         frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        eroded = cv2.erode(hsv, None, iterations=2)
+        dilated = cv2.dilate(eroded, None, iterations=2)
 
         # 2. Create a mask to find the color
-        mask = cv2.inRange(hsv, self.lower_color.astype('uint8'), self.upper_color.astype('uint8'))
+        mask = cv2.inRange(dilated, self.lower_color.astype('uint8'), self.upper_color.astype('uint8'))
         
         # 3. Find the "Center of Mass" of the color pixels
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
