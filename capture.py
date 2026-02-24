@@ -4,7 +4,7 @@ from mss import mss
 
 
 class ColorDetector:
-    def __init__(self, search_size: int = 400, lower_color: np.ndarray = None, upper_color: np.ndarray = None, exclude_yellow: bool = True):
+    def __init__(self, search_size: int = 200, lower_color: np.ndarray = None, upper_color: np.ndarray = None, exclude_yellow: bool = True):
         self.sct = mss()
         self.search_size = int(search_size)
         self.monitor = self.sct.monitors[1]
