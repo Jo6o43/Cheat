@@ -87,6 +87,7 @@ class ColorDetector:
             # typically wide and very short) or are too small to be an enemy.
             candidates = []
             min_area = 300  # ignore tiny blobs
+            v_channel = hsv[:, :, 2]
             for cnt in contours:
                 area = cv2.contourArea(cnt)
                 if area < min_area:
@@ -99,6 +100,23 @@ class ColorDetector:
                 if h < 12:
                     # too short to be a character body
                     continue
+
+                # Additional heuristics to reject flat, rectangular UI bars:
+                # 1) If the contour spans most of the search width but is very
+                #    short in height, it's likely a UI element.
+                if w > int(self.search_size * 0.6) and h < max(6, int(self.search_size * 0.08)):
+                    continue
+
+                # 2) Compute the V-channel standard deviation inside the contour.
+                #    Health bars are usually flat/uniform brightness (low stddev).
+                mask_contour = np.zeros(mask.shape, dtype=np.uint8)
+                cv2.drawContours(mask_contour, [cnt], -1, 255, -1)
+                _, stddev = cv2.meanStdDev(v_channel, mask=mask_contour)
+                std_v = float(stddev[0]) if stddev is not None else 0.0
+                if std_v < 6.0:
+                    # low brightness variance -> likely a flat UI bar
+                    continue
+
                 candidates.append((area, cnt))
 
             if candidates:
