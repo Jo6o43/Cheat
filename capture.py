@@ -34,14 +34,15 @@ class ColorDetector:
         
         img = np.array(self.sct.grab(region))
         frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        eroded = cv2.erode(hsv, None, iterations=2)
-        dilated = cv2.dilate(eroded, None, iterations=2)
+        frame_suave = cv2.GaussianBlur(frame, (3, 3), 0)
+        hsv = cv2.cvtColor(frame_suave, cv2.COLOR_BGR2HSV)
 
-        # 2. Create a mask to find the color
-        mask = cv2.inRange(dilated, self.lower_color.astype('uint8'), self.upper_color.astype('uint8'))
+        mask = cv2.inRange(hsv, self.lower_color.astype('uint8'), self.upper_color.astype('uint8'))
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+        mask = cv2.medianBlur(mask, 5)
         
-        # 3. Find the "Center of Mass" of the color pixels
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         detections = []
