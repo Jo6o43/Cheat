@@ -4,7 +4,7 @@ from mss import mss
 
 
 class ColorDetector:
-    def __init__(self, search_size: int = 400, lower_color: np.ndarray = None, upper_color: np.ndarray = None):
+    def __init__(self, search_size: int = 400, lower_color: np.ndarray = None, upper_color: np.ndarray = None, exclude_yellow: bool = True):
         self.sct = mss()
         self.search_size = int(search_size)
         self.monitor = self.sct.monitors[1]
@@ -12,8 +12,13 @@ class ColorDetector:
         self.screen_w = self.monitor['width']
         self.screen_h = self.monitor['height']
 
-        self.lower_color = np.array([5, 150, 150]) if lower_color is None else np.array(lower_color, dtype=np.int32)
-        self.upper_color = np.array([22, 255, 255]) if upper_color is None else np.array(upper_color, dtype=np.int32)
+        # Default to an orange-biased range (helps prefer orange over yellow)
+        self.lower_color = np.array([6, 120, 120]) if lower_color is None else np.array(lower_color, dtype=np.int32)
+        self.upper_color = np.array([18, 255, 255]) if upper_color is None else np.array(upper_color, dtype=np.int32)
+
+        # When True, pixels that strongly match a generic yellow range will be
+        # removed from the main mask to avoid detecting yellow UI elements.
+        self.exclude_yellow = bool(exclude_yellow)
 
     def set_thresholds(self, lower, upper):
         """Set HSV lower/upper thresholds. Accepts sequences or numpy arrays."""
@@ -37,13 +42,44 @@ class ColorDetector:
         frame_suave = cv2.GaussianBlur(frame, (3, 3), 0)
         hsv = cv2.cvtColor(frame_suave, cv2.COLOR_BGR2HSV)
 
-        mask = cv2.inRange(hsv, self.lower_color.astype('uint8'), self.upper_color.astype('uint8'))
-        kernel = np.ones((3, 3), np.uint8)
+        # Clamp HSV to valid ranges and handle H wrap-around (useful for red)
+        lower = np.array(self.lower_color, dtype=np.int32)
+        upper = np.array(self.upper_color, dtype=np.int32)
+        lower[0] = int(np.clip(lower[0], 0, 179))
+        upper[0] = int(np.clip(upper[0], 0, 179))
+        lower[1:] = np.clip(lower[1:], 0, 255)
+        upper[1:] = np.clip(upper[1:], 0, 255)
+
+        if lower[0] <= upper[0]:
+            mask = cv2.inRange(hsv, lower.astype('uint8'), upper.astype('uint8'))
+        else:
+            # Hue wrap-around: combine two ranges (e.g. H in [170,179] or [0,10])
+            low1 = np.array([lower[0], lower[1], lower[2]], dtype=np.uint8)
+            high1 = np.array([179, upper[1], upper[2]], dtype=np.uint8)
+            low2 = np.array([0, lower[1], lower[2]], dtype=np.uint8)
+            high2 = np.array([upper[0], upper[1], upper[2]], dtype=np.uint8)
+            m1 = cv2.inRange(hsv, low1, high1)
+            m2 = cv2.inRange(hsv, low2, high2)
+            mask = cv2.bitwise_or(m1, m2)
+
+        # Optionally remove generic yellow pixels to avoid false positives
+        if self.exclude_yellow:
+            # Generic yellow range (tunable)
+            yellow_low = np.array([18, 80, 80], dtype=np.uint8)
+            yellow_high = np.array([35, 255, 255], dtype=np.uint8)
+            yellow_mask = cv2.inRange(hsv, yellow_low, yellow_high)
+            # Subtract yellow-like pixels from the main mask
+            mask = cv2.bitwise_and(mask, cv2.bitwise_not(yellow_mask))
+
+        # Use elliptical kernels to better preserve rounded shapes
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
         mask = cv2.medianBlur(mask, 5)
-        
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Robust findContours unpacking across OpenCV versions
+        cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = cnts[0] if len(cnts) == 2 else cnts[1]
         
         detections = []
         if contours:
