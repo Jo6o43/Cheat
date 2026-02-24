@@ -110,19 +110,32 @@ class ColorDetector:
                 if w > int(self.search_size * 0.6) and h < max(6, int(self.search_size * 0.08)):
                     return True
 
-                # 5) Solidity: HP bars fill their bounding rect almost completely.
-                #    Enemy bodies (irregular silhouette) have much lower solidity.
+                # 5) Solidity check adapted for SEGMENTED bars.
+                #    A segmented bar (many rounded blocks with gaps) has solidity
+                #    in the 0.50–0.82 range — LOWER than a solid body but still
+                #    wide.  A body silhouette tends to be taller and more varied.
                 bbox_area = float(w * h + 1e-6)
                 solidity  = area / bbox_area
-                if solidity > 0.85 and aspect > 2.0:
+                # Solid-block bar (gaps filled by morphology) OR segmented bar
+                if aspect > 2.0 and 0.45 < solidity < 0.95:
                     return True
 
-                # 6) Rectangularity via polygon approximation.
-                #    HP bars approximate to <= 5 vertices; bodies need many more.
-                peri  = cv2.arcLength(cnt, True)
-                approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
-                if len(approx) <= 5 and aspect > 1.8:
-                    return True
+                # 6) Convexity-defect count: the rounded segments create many
+                #    periodic concavities (notches) along the bar's top/bottom.
+                #    Count significant defects — bars have >= 4, bodies far fewer
+                #    per unit aspect.
+                try:
+                    hull_idx = cv2.convexHull(cnt, returnPoints=False)
+                    if hull_idx is not None and len(hull_idx) >= 3:
+                        defects = cv2.convexityDefects(cnt, hull_idx)
+                        if defects is not None:
+                            # Count defects whose depth > 2 pixels
+                            sig_defects = int(np.sum(defects[:, 0, 3] / 256.0 > 2.0))
+                            # Many small periodic defects + wide/short = segmented bar
+                            if sig_defects >= 4 and aspect > 1.5:
+                                return True
+                except cv2.error:
+                    pass
 
                 # 7) Both V-channel AND S-channel variance must be low for a bar.
                 #    Bars are uniformly coloured; enemy textures vary in both.
@@ -132,8 +145,8 @@ class ColorDetector:
                 _, ss = cv2.meanStdDev(s_channel, mask=mask_c)
                 std_v = float(sv[0, 0]) if sv is not None else 0.0
                 std_s = float(ss[0, 0]) if ss is not None else 0.0
-                # Low variance in BOTH channels -> flat coloured rectangle (bar)
-                if std_v < 8.0 and std_s < 12.0:
+                # Low variance in BOTH channels -> flat coloured region (bar)
+                if std_v < 9.0 and std_s < 14.0:
                     return True
                 # Still reject if brightness alone is very flat
                 if std_v < 5.0:
